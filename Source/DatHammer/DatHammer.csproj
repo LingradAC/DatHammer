@@ -6,7 +6,20 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <ApplicationIcon>./DatHammer.ico</ApplicationIcon>
+	<ApplicationVersion>1.0.0</ApplicationVersion>
+	<Authors>Lingrad</Authors>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="MainWindow2.xaml.cs" />
+    <Compile Remove="StringTools2.xaml.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Page Remove="MainWindow2.xaml" />
+    <Page Remove="StringTools2.xaml" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Chorizite.DatReaderWriter" Version="2.0.0" />
