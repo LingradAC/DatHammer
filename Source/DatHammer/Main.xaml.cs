@@ -12,6 +12,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using SixLabors.ImageSharp.Formats;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Drawing;
@@ -21,6 +22,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Printing;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -30,10 +32,15 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Media3D;
+using System.Windows.Media.TextFormatting;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using System.Windows.Threading;
+using System.Xml.Linq;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace DatHammer
@@ -704,6 +711,9 @@ namespace DatHammer
         private void CreateLayout(object sender, RoutedEventArgs e)
         {
             LayoutWindow.Content = null;
+            //Globals.CommitDats();
+
+            CommitDats();
 
             var layoutAll = Globals.datFiles.GetAllIdsOfType<LayoutDesc>();
             foreach (var layoutItem in layoutAll)
@@ -733,6 +743,11 @@ namespace DatHammer
                 //AddConsoleLine($"[INFO]: Image type: {text}");
 
                 layoutID = uint.Parse(text, NumberStyles.HexNumber);
+            }
+            else if (dropdownLayout.SelectedItem == null || dropdownLayout.SelectedItem == "")
+            {
+                dropdownLayout.SelectedIndex = 0;
+                dropdownLayout.Focus();
             }
 
             var layout = Globals.datFiles.Get<LayoutDesc>(layoutID);
@@ -767,10 +782,10 @@ namespace DatHammer
 
             AddConsoleLine("Success 1");
 
-            foreach (var item in layout.Elements)
+            foreach (var item in layout.Elements.Values)
             {
                 CreateCanvas(sender, e, item, canvas, 0);
-                
+
                 /*System.Windows.Controls.Border border2 = new System.Windows.Controls.Border();
                 border2.BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 70, 150));
                 border2.BorderThickness = new Thickness(1);
@@ -786,7 +801,7 @@ namespace DatHammer
                 Panel.SetZIndex(canvas2, System.Convert.ToInt32(item.Value.ZLevel));
                 canvas.Children.Add(canvas2);*/
 
-                AddConsoleLine($"Loaded 0x{item.Value.ElementId:X8}");
+                AddConsoleLine($"Loaded 0x{item.ElementId:X8}");
 
                 /*foreach (var item2 in item.Value.Children)
                 {
@@ -852,12 +867,12 @@ namespace DatHammer
             }
         }
 
-        private void CreateCanvas(object sender, RoutedEventArgs e, KeyValuePair<uint, ElementDesc> element, Canvas canvas, int zindex) // Removed "HashTable<uint, ElementDesc> parent"
+        private void CreateCanvas(object sender, RoutedEventArgs e, ElementDesc element, Canvas canvas, int zindex) // Removed "HashTable<uint, ElementDesc> parent"
         {
             System.Windows.Controls.Border border2 = new System.Windows.Controls.Border();
             border2.BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 50, 160));
             border2.BorderThickness = new Thickness(0.3);
-            if (element.Value.Width == 800 && element.Value.Height == 600)
+            if (element.Width == 800 && element.Height == 600)
             {
                 border2.Background = new SolidColorBrush(Colors.Transparent);
                 border2.IsHitTestVisible = false;
@@ -866,18 +881,22 @@ namespace DatHammer
             {
                 border2.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(51, 110, 150, 210));
             }
-            border2.Width = element.Value.Width / 2.5;
-            border2.Height = element.Value.Height / 2.5;
+            border2.Width = element.Width / 2.5;
+            border2.Height = element.Height / 2.5;
             border2.MouseLeftButtonDown += SelectableBorder_Click;
             border2.MouseEnter += SelectableBorder_Hover;
             border2.MouseLeave += SelectableBorder_Unhover;
-            int ZIndex = System.Convert.ToInt32(element.Value.ZLevel) + zindex + 2;
+            int ZIndex = System.Convert.ToInt32(element.ZLevel / 2) + zindex + 2;
             Panel.SetZIndex(border2, ZIndex);
+
             Canvas canvas2 = new Canvas();
             canvas2.Children.Add(border2);
-            canvas2.Width = element.Value.Width / 2.5;
-            canvas2.Height = element.Value.Height / 2.5;
-            canvas2.Margin = new Thickness(( element.Value.X) / 2.5, ( element.Value.Y) / 2.5, 0, 0);
+            canvas2.Width = element.Width / 2.5;
+            canvas2.Height = element.Height / 2.5;
+            Canvas.SetLeft(canvas2, (element.X) / 2.5);
+            Canvas.SetTop(canvas2, (element.Y) / 2.5);
+            //canvas2.Margin = new Thickness((element.Value.X) / 2.5, (element.Value.Y) / 2.5, 0, 0);
+
             Thumb resize = new Thumb();
             resize.Width = 8;
             resize.Height = 8;
@@ -892,35 +911,416 @@ namespace DatHammer
             canvas2.Children.Add(resize);
             Canvas.SetRight(resize, -4);
             Canvas.SetBottom(resize, -4);
-            Panel.SetZIndex(canvas2, System.Convert.ToInt32(element.Value.ZLevel) + zindex + 1);
+
+            Thumb move = new Thumb();
+            move.Width = 12;
+            move.Height = 12;
+            move.Background = System.Windows.Media.Brushes.White;
+            move.BorderBrush = System.Windows.Media.Brushes.Black;
+            move.BorderThickness = new Thickness(1);
+            move.Visibility = Visibility.Collapsed;
+            move.DragDelta += (sender, e) => MoveThumb_DragDelta(sender, e, border2);
+            move.DragCompleted += (sender, e) => MoveThumb_DragCompleted(sender, e, element);
+            move.Cursor = Cursors.SizeAll;
+            //move.Margin = new Thickness((canvas2.Width / 2) - (move.Width / 2), (canvas2.Height / 2) - (move.Height / 2), 0, 0);
+            Panel.SetZIndex(move, ZIndex + 1);
+            Canvas.SetLeft(move, 0);
+            Canvas.SetTop(move, 0);
+            canvas2.Children.Add(move);
+            Panel.SetZIndex(canvas2, System.Convert.ToInt32(element.ZLevel / 2) + zindex + 1);
             canvas.Children.Add(canvas2);
-            
-            //var media = element.Value.StateDesc.Media;
-            /*foreach (var state in element.Value.States)
+
+            HandleStates(element, canvas2);
+
+            foreach (var child in element.Children.Values)
             {
-                foreach (MediaDescImage media in state.Value.Media)
+                //AddConsoleLine($"[INFO]: Found 0x{child.ElementId:X8} in 0x{element.ElementId:X8}");
+                CreateCanvas(sender, e, child, canvas2, ZIndex);
+            }
+        }
+
+        private void HandleStatesOld(ElementDesc element, Canvas canvas2)
+        {
+            foreach (var state in element.States.Values)
+            {
+                if (element.BaseElement != 0)
                 {
-                    //AddConsoleLine($"Found {media.MediaType.ToString()}");
-
-                    uint File = media.File;
-                    AddConsoleLine($"[Image] - Found 0x{File:X8}");
-
-                    if (media.MediaType == MediaType.Image)
+                    var layoutId = Globals.datFiles.Get<LayoutDesc>(element.BaseLayoutId);
+                    //var elementId = layoutId.Elements[element.BaseElement];
+                    //var elementId2;
+                    if (layoutId.Elements.TryGetValue(element.BaseElement, out var baseElement))
                     {
-                        MediaDescImage image = (MediaDescImage)media;
-                        //uint File = image.File;
+                        foreach (var state2 in baseElement.States)
+                        {
+                            CreateImage(state2.Value, canvas2, baseElement);
+                        }
 
-                        //AddConsoleLine($"[Image] - Found 0x{File:X8}");
+                        HandleStates(baseElement, canvas2);
                     }
                 }
+                else
+                {
+                    CreateImage(state, canvas2, element);
+                }
+            }
+        }
 
-                string stateId = $"0x{state.Value.StateId:X8}";
-                AddConsoleLine($"Found state {stateId}");
+        private void HandleStates(ElementDesc element, Canvas canvas) // ChatGPT's fixed version of HandleStatesOld
+        {
+            // Resolve full base chain (base → derived)
+            var chain = new List<ElementDesc>();
+            var current = element;
+
+            while (current != null)
+            {
+                chain.Insert(0, current); // base first
+
+                if (current.BaseElement == 0)
+                    break;
+
+                var layout = Globals.datFiles.Get<LayoutDesc>(current.BaseLayoutId);
+                if (!layout.Elements.TryGetValue(current.BaseElement, out current))
+                    break; // stop if base not found
+            }
+
+            // Render each element in the chain
+            foreach (var el in chain)
+            {
+                CreateImage(el.StateDesc, canvas, el);
+
+                foreach (var state in el.States.Values)
+                {
+                    CreateImage(state, canvas, el);
+                }
+            }
+        }
+
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        public static extern bool DeleteObject(IntPtr hObject);
+
+        private int _currentIndex = 0;
+        private DispatcherTimer _timer;
+        public void CreateAnimation(List<Bitmap> imageList, float duration, StateDesc state, Canvas canvas)
+        {
+            System.Windows.Controls.Image imgControl = new System.Windows.Controls.Image();
+            imgControl.Source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
+                imageList[_currentIndex].GetHbitmap(),
+                IntPtr.Zero,
+                Int32Rect.Empty,
+                BitmapSizeOptions.FromEmptyOptions());
+            imgControl.Width = imageList[0].Width / 2.5;
+            imgControl.Height = imageList[0].Height / 2.5;
+            canvas.Children.Add(imgControl);
+            Canvas.SetLeft(imgControl, 0);
+            Canvas.SetTop(imgControl, 0);
+            //imgControl.Margin = new Thickness(0, 0, 0, 0);
+            Panel.SetZIndex(imgControl, System.Convert.ToInt32(state.StateId) + 1);
+
+            _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(duration / imageList.Count) };
+            _timer.Tick += (s, e) => {
+                IntPtr hBitmap = imageList[_currentIndex].GetHbitmap();
+                try
+                {
+                    imgControl.Source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
+                        hBitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+                }
+                finally
+                {
+                    DeleteObject(hBitmap); // This prevents the crash
+                }
+                _currentIndex++;
+                if (_currentIndex == imageList.Count)
+                    _currentIndex = 0;
+            };
+
+            _timer.Start();
+
+            AddConsoleLine($"[INFO]: Added {imageList.Count} frames to animation in state {state.StateId}");
+        }
+
+        private void CreateImage(StateDesc state, Canvas canvas, ElementDesc element)
+        {
+            foreach (MediaDesc media in state.Media)
+            {
+                switch (media.Type)
+                {
+                    case MediaType.Alpha:
+                        MediaDescAlpha alpha = (MediaDescAlpha)media;
+
+                        AddConsoleLine($"[INFO]: Alpha Image 0x{alpha.File:X8} found in 0x{state.StateId:X8}");
+
+                        break;
+                    case MediaType.Animation:
+                        MediaDescAnimation animation = (MediaDescAnimation)media;
+
+                        AddConsoleLine($"[INFO]: Animation found!");
+
+                        List<Bitmap> frameList = new List<Bitmap>();
+                        foreach (var frame in animation.Frames)
+                        {
+                            if (Globals.datFiles.TryGet<RenderSurface>(frame, out RenderSurface frameSurface))
+                            {
+                                //Bitmap bitmap = new Bitmap(surface.Width, surface.Height, (System.Drawing.Imaging.PixelFormat)surface.Format);
+
+                                //var sources = texture.SourceLevels;
+
+                                //RenderSurface surface = null; ;
+                                /*foreach (var source in sources)
+                                {
+                                    surface = source.Get(Globals.datFiles);
+                                }*/
+
+                                Bitmap bitmap = ToBitmap(frameSurface);
+                                if (bitmap != null)
+                                {
+                                    /*System.Windows.Controls.Image imgControl = new System.Windows.Controls.Image();
+                                    imgControl.Source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
+                                        bitmap.GetHbitmap(),
+                                        IntPtr.Zero,
+                                        Int32Rect.Empty,
+                                        BitmapSizeOptions.FromEmptyOptions());
+                                    imgControl.Width = bitmap.Width / 2.5;
+                                    imgControl.Height = bitmap.Height / 2.5;
+                                    //canvas.Children.Add(imgControl);
+                                    Canvas.SetLeft(imgControl, 0);
+                                    Canvas.SetTop(imgControl, 0);
+                                    //imgControl.Margin = new Thickness(0, 0, 0, 0);
+                                    Panel.SetZIndex(imgControl, System.Convert.ToInt32(state.StateId) + 1);*/
+
+                                    frameList.Add(bitmap);
+
+                                    //canvas.Children.Add(imgControl);
+                                    //AddConsoleLine($"[INFO]: Image 0x{id:X8} added to canvas.");
+                                }
+                            }
+                        }
+
+                        CreateAnimation(frameList, animation.Duration, state, canvas);
+
+                        break;
+                    case MediaType.Cursor:
+                        MediaDescCursor cursor = (MediaDescCursor)media;
+
+                        AddConsoleLine($"[INFO]: Cursor 0x{cursor.File:X8} found in 0x{state.StateId:X8}");
+
+                        break;
+                    case MediaType.Fade:
+                        MediaDescFade fade = (MediaDescFade)media;
+
+                        AddConsoleLine($"[INFO]: Fade found in 0x{state.StateId:X8}");
+
+                        break;
+                    case MediaType.Image:
+                        MediaDescImage image = (MediaDescImage)media;
+                        uint id = image.File;
+
+                        if (Globals.datFiles.TryGet<RenderSurface>(image.File, out RenderSurface surface))
+                        {
+                            //Bitmap bitmap = new Bitmap(surface.Width, surface.Height, (System.Drawing.Imaging.PixelFormat)surface.Format);
+                            
+                            //var sources = texture.SourceLevels;
+
+                            //RenderSurface surface = null; ;
+                            /*foreach (var source in sources)
+                            {
+                                surface = source.Get(Globals.datFiles);
+                            }*/
+
+                            Bitmap bitmap = ToBitmap(surface);
+                            if (bitmap != null)
+                            {
+                                System.Windows.Controls.Image imgControl = new System.Windows.Controls.Image();
+                                imgControl.Source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
+                                    bitmap.GetHbitmap(),
+                                    IntPtr.Zero,
+                                    Int32Rect.Empty,
+                                    BitmapSizeOptions.FromEmptyOptions());
+                                imgControl.Width = bitmap.Width / 2.5;
+                                imgControl.Height = bitmap.Height / 2.5;
+                                imgControl.IsHitTestVisible = false;
+                                canvas.Children.Add(imgControl);
+                                Canvas.SetLeft(imgControl, 0);
+                                Canvas.SetTop(imgControl, 0);
+                                //imgControl.Margin = new Thickness(0, 0, 0, 0);
+                                Panel.SetZIndex(imgControl, System.Convert.ToInt32(state.StateId) + 1);
+                                //imgControl.IsHitTestVisible = false;
+                                // Assuming 'canvas' is your Canvas control
+                                //canvas.Children.Add(imgControl);
+                                AddConsoleLine($"[INFO]: Image 0x{id:X8} added to canvas.");
+                            }
+                        }
+                        else
+                        {
+                            AddConsoleLine($"[ERROR]: Failed to create image 0x{id:X8}");
+                        }
+
+                        //AddConsoleLine($"[INFO]: Image 0x{image.File:X8} found in 0x{state.Value.StateId:X8}");
+
+                        break;
+                    case MediaType.Jump:
+                        MediaDescJump jump = (MediaDescJump)media;
+
+                        AddConsoleLine($"[INFO]: Jump to 0x{jump.JumpItemIndex:X8} found in 0x{state.StateId:X8}");
+
+                        break;
+                    case MediaType.Message:
+                        MediaDescMessage message = (MediaDescMessage)media;
+
+                        AddConsoleLine($"[INFO]: Message (string) 0x{message.Id:X8} found in 0x{state.StateId:X8}");
+
+                        break;
+                    case MediaType.Movie:
+                        MediaDescMovie movie = (MediaDescMovie)media;
+
+                        AddConsoleLine($"[INFO]: Movie {movie.FileName} found in 0x{state.StateId:X8}");
+
+                        break;
+                    case MediaType.Pause:
+                        MediaDescPause pause = (MediaDescPause)media;
+
+                        AddConsoleLine($"[INFO]: Pause found in 0x{state.StateId:X8}");
+
+                        break;
+                    case MediaType.Sound:
+                        MediaDescSound sound = (MediaDescSound)media;
+
+                        AddConsoleLine($"[INFO]: Sound 0x{sound.File:X8} found in 0x{state.StateId:X8}");
+
+                        break;
+                    case MediaType.State:
+                        MediaDescState mediaState = (MediaDescState)media;
+
+                        //AddConsoleLine($"[INFO]: Image 0x{mediaState.StateId:X8} found in 0x{state.Value.StateId:X8}");
+
+                        break;
+                    default:
+                        break;
+                }
+
+                /*foreach (MediaDescAnimation anim in state.Media)
+                {
+                    AddConsoleLine($"[INFO]: Animation found!");
+
+                    List<Bitmap> frameList = new List<Bitmap>();
+                    foreach (var frame in anim.Frames)
+                    {
+                        if (Globals.datFiles.TryGet<RenderSurface>(frame, out RenderSurface frameSurface))
+                        {
+                            Bitmap bitmap = ToBitmap(frameSurface);
+                            if (bitmap != null)
+                            {
+                                frameList.Add(bitmap);
+                            }
+                        }
+                    }
+
+                    CreateAnimation(frameList, anim.Duration, state, canvas);
+                }*/
+
+
+                /*if (media.Type == MediaType.Image)
+                {
+                    MediaDescImage image = (MediaDescImage)media;
+
+                    AddConsoleLine($"[INFO]: Image 0x{image.File:X8} found in 0x{state.Value.StateId:X8}");
+                }*/
+                //AddConsoleLine($"[Image] - Found 0x{File:X8}");
+            }
+        }
+
+        private Bitmap ToBitmap(RenderSurface surface)
+        {
+            /*if (element.Value.BaseElement != 0)
+            {
+                var baseLayout = Globals.datFiles.Get<LayoutDesc>(element.Value.BaseLayoutId);
+                var baseElement = baseLayout.Elements[element.Value.BaseElement];
+
+                foreach (var state in baseElement.States)
+                {
+                    CreateMediaDesc(state, canvas, element);
+                }
+
+                return null;
+
+                //surface = Globals.datFiles.Get<RenderSurface>(image.File);
+
+                var baseLayout = Globals.datFiles.Get<LayoutDesc>(element.Value.BaseLayoutId);
+                var baseElement = baseLayout.Elements[element.Value.BaseElement];
+
+                foreach (var state in baseElement.States)
+                {
+                    //MediaDescImage image = (MediaDescImage)media;
+                    //uint id = image.File;
+
+                    CreateMediaDesc(state, canvas, element);
+                }
             }*/
 
-            foreach (var child in element.Value.Children)
+            if (surface == null)
             {
-                CreateCanvas(sender, e, child, canvas2, ZIndex);
+                return null;
+            }
+
+            int width = surface.Width;
+            int height = surface.Height;
+
+            if (surface.Format == DatReaderWriter.Enums.PixelFormat.PFID_CUSTOM_RAW_JPEG)
+            {
+                using (var ms = new MemoryStream(surface.SourceData))
+                using (var temp = new Bitmap(ms))
+                {
+                    Bitmap bitmapJpg = new Bitmap(temp, temp.Width, temp.Height); // Jpeg copy
+                    return bitmapJpg;
+                }
+            }
+
+            if (width <= 0 || height <= 0)
+            {
+                AddConsoleLine($"[ERROR]: Invalid surface dimensions: {width}x{height} (0x{surface.Id:X8})");
+                return null;
+            }   
+            Bitmap bitmap = new Bitmap(width, height);
+
+            int i = 0;
+            byte[] rgb;
+            switch (surface.Format)
+            {
+                case DatReaderWriter.Enums.PixelFormat.PFID_R8G8B8:
+                    i = 0;
+                    rgb = surface.SourceData;
+                    for (int y = 0; y < height; y++)
+                        for (int x = 0; x < width; x++)
+                        {
+                            byte b = rgb[i++];
+                            byte g = rgb[i++];
+                            byte r = rgb[i++];
+
+                            bitmap.SetPixel(x, y, System.Drawing.Color.FromArgb(r, g, b));
+                        }
+                    return bitmap;
+                case DatReaderWriter.Enums.PixelFormat.PFID_A8R8G8B8:
+                    i = 0;
+                    rgb = surface.SourceData;
+                    for (int y = 0; y < height; y++)
+                        for (int x = 0; x < width; x++)
+                        {
+                            byte b = rgb[i++];
+                            byte g = rgb[i++];
+                            byte r = rgb[i++];
+                            byte a = rgb[i++];
+
+                            bitmap.SetPixel(x, y, System.Drawing.Color.FromArgb(a, r, g, b));
+                        }
+                    return bitmap;
+                /*case DatReaderWriter.Enums.PixelFormat.PFID_CUSTOM_RAW_JPEG:
+                    using (var ms = new MemoryStream(surface.SourceData))
+                    using (var temp = new Bitmap(ms))
+                    {
+                        bitmap = new Bitmap(temp, temp.Width, temp.Height); // full copy
+                    }
+                    return bitmap;*/
+                default:
+                    return null;
             }
         }
 
@@ -936,6 +1336,7 @@ namespace DatHammer
 
         private void dropdownLayout_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            DisposeAll();
             CreateLayout(sender, e);
         }
 
@@ -945,26 +1346,91 @@ namespace DatHammer
             Thumb thumb = sender as Thumb;
             Canvas element = thumb.Parent as Canvas;
 
-            element.Width = Math.Max(1, element.Width + e.HorizontalChange);
-            element.Height = Math.Max(1, element.Height + e.VerticalChange);
-            border.Width = Math.Max(1, element.Width + e.HorizontalChange);
-            border.Height = Math.Max(1, element.Height + e.VerticalChange);
+            element.Width = (uint)Math.Max(1, element.Width + e.HorizontalChange);
+            element.Height = (uint)Math.Max(1, element.Height + e.VerticalChange);
+            border.Width = (uint)Math.Max(1, element.Width + e.HorizontalChange);
+            border.Height = (uint)Math.Max(1, element.Height + e.VerticalChange);
         }
 
-        private void Thumb_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e, KeyValuePair<uint, ElementDesc> elementDesc)
+        private void Thumb_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e, ElementDesc elementDesc)
         {
-            elementDesc.Value.Width += (uint)e.HorizontalChange;
-            elementDesc.Value.Height += (uint)e.VerticalChange;
+            elementDesc.Width += (uint)e.HorizontalChange;
+            elementDesc.Height += (uint)e.VerticalChange;
 
             var layoutDesc = Globals.datFiles.Local.GetLayoutDesc(layoutID);
+            Globals.datFiles.TryWriteFile(layoutDesc);
+
+            /*if (!Globals.datFiles.TryWriteFile(layoutDesc))
+            {
+                AddConsoleLine($"[ERROR]: Failed to write layoutDesc 0x{layoutID:X8}");
+                return;
+            }*/
+            AddConsoleLine($"[INFO]: Successfully wrote layoutDesc 0x{layoutID:X8}");
+            //Globals.datFiles.Dispose();
+            //Globals.datFiles.Dispose();
+            //Globals.datFiles = new DatCollection(Globals.datFolder, DatAccessType.ReadWrite);
+        }
+
+        private void MoveThumb_DragDelta(object sender, System.Windows.Controls.Primitives.DragDeltaEventArgs e, Border border)
+        {
+            Thumb thumb = sender as Thumb;
+            Canvas element = thumb.Parent as Canvas;
+
+            //var elementX = element.Margin.Left;
+            //var elementY = element.Margin.Top;
+            //element.Margin = new Thickness(elementX += e.HorizontalChange, elementY += e.VerticalChange, 0, 0);
+            //element.Margin = new Thickness(elementX += e.HorizontalChange, elementY += e.VerticalChange, 0, 0);
+            Canvas.SetLeft(element, Canvas.GetLeft(element) + e.HorizontalChange);
+            Canvas.SetTop(element, Canvas.GetTop(element) + e.VerticalChange);
+
+            //var borderX = border.Margin.Left;
+            //var borderY = border.Margin.Top;
+            //border.Margin = new Thickness(borderX += e.HorizontalChange, borderY += e.VerticalChange, 0, 0);
+            //border.Margin = new Thickness(borderX += e.HorizontalChange, borderY += e.VerticalChange, 0, 0);
+            //Canvas.SetLeft(border, Canvas.GetLeft(border) + e.HorizontalChange);
+            //Canvas.SetTop(border, Canvas.GetTop(border) + e.VerticalChange);
+
+            /*Thumb thumb = sender as Thumb;
+            Canvas element = thumb.Parent as Canvas;
+
+            double left = Canvas.GetLeft(element);
+            double top = Canvas.GetTop(element);
+
+            Canvas.SetLeft(element, left + e.HorizontalChange);
+            Canvas.SetTop(element, top + e.VerticalChange);
+
+            double left2 = Canvas.GetLeft(border);
+            double top2 = Canvas.GetTop(border);
+
+            Canvas.SetLeft(border, left2 + e.HorizontalChange);
+            Canvas.SetTop(border, top2 + e.VerticalChange);*/
+
+            //thumb.Margin = new Thickness((element.Width / 2) - (thumb.Width / 2), (element.Height / 2) - (thumb.Height / 2), 0, 0);
+        }
+
+        private void MoveThumb_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e, ElementDesc elementDesc)
+        {
+            elementDesc.X += (uint)e.HorizontalChange;
+            elementDesc.Y += (uint)e.VerticalChange;
+
+            //Thickness((canvas2.Width / 2) - (move.Width / 2), (canvas2.Height / 2) - (move.Height / 2), 0, 0);
+
+            var layoutDesc = Globals.datFiles.Local.GetLayoutDesc(layoutID);
+            //Globals.datFiles.TryWriteFile(layoutDesc);
 
             if (!Globals.datFiles.TryWriteFile(layoutDesc))
             {
                 AddConsoleLine($"[ERROR]: Failed to write layoutDesc 0x{layoutID:X8}");
                 return;
             }
-            AddConsoleLine($"[INFO]: Successfully wrote layoutDesc 0x{layoutID:X8}");
-            Globals.datFiles.Dispose();
+            else
+            {
+                AddConsoleLine($"[INFO]: Successfully wrote layoutDesc 0x{layoutID:X8}");
+            }
+                
+            //Globals.datFiles.Dispose();
+            //Globals.datFiles.Dispose();
+            //Globals.datFiles = new DatCollection(Globals.datFolder, DatAccessType.ReadWrite);
         }
 
         private void ThumbVisibility(Border element, Visibility vis)
@@ -978,5 +1444,24 @@ namespace DatHammer
                 }
             }
         }
+
+        public void CommitDats()
+        {
+            DisposeAll();
+            OpenAll();
+        }
+
+        public void DisposeAll()
+        {
+            Globals.datFiles.Dispose();
+        }
+        public void OpenAll()
+        {
+            Globals.datFiles = new DatCollection(Globals.datFolder, DatAccessType.ReadWrite);
+            Globals.langDat = new LocalDatabase(Globals.langPath, DatAccessType.ReadWrite);
+            Globals.portalDat = new PortalDatabase(Globals.portalPath, DatAccessType.ReadWrite);
+            Globals.cellDat = new CellDatabase(Globals.cellPath, DatAccessType.ReadWrite);
+        }
+        
     }
 }

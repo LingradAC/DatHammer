@@ -9,6 +9,7 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Shapes;
@@ -17,8 +18,6 @@ namespace DatHammer
 {
     public static class Globals
     {
-
-        
         public static string optionsPath = "./Options.json";
         public static string json = File.ReadAllText(optionsPath);
         public static JObject config = JObject.Parse(json);
@@ -44,6 +43,11 @@ namespace DatHammer
         {
             config[key] = value;
             File.WriteAllText(optionsPath, config.ToString(Newtonsoft.Json.Formatting.Indented));
+        }
+
+        public static void OpenDats()
+        {
+            datFiles = new DatCollection(datFolder, DatAccessType.ReadWrite);
         }
 
         public class AppState : INotifyPropertyChanged

@@ -27,6 +27,7 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.2" />
     <PackageReference Include="System.IO" Version="4.3.0" />
+    <PackageReference Include="WinFormAnimation" Version="1.6.0.4" />
   </ItemGroup>
 
   <ItemGroup>
